@@ -1,0 +1,1 @@
+{"name":"family-book","private":true,"scripts":{"test":"node --test tests/*.test.cjs","check":"node --check app.js && node --check crypto.js"}}
