@@ -14,7 +14,7 @@
 2. `family-data`: 반드시 **Private**. README로 초기화. `family.enc.json`에 기록과 사진이 암호화되어 저장됨. Pages를 켜지 마세요.
 3. 코드 저장소 Settings → Pages → main / root 배포.
 4. 사용자가 직접 GitHub fine-grained token을 발급: **family-data만 선택**, Contents Read and write. 사이트 코드 저장소 권한은 필요 없음.
-5. 사이트에서 계정·family-data·토큰·12자 이상 비밀번호로 접속. 첫 저장 시 암호문 파일 생성. 다른 기기도 동일한 토큰/비밀번호로 연결. 토큰은 메모리에만 유지되어 새로고침 시 재입력.
+5. 사이트에서 계정·family-data·토큰·9자 이상 비밀번호로 접속. 첫 저장 시 암호문 파일 생성. 다른 기기도 동일한 토큰/비밀번호로 연결. 토큰은 메모리에만 유지되어 새로고침 시 재입력.
 
 ## 보안과 한계
 - PBKDF2-SHA256 600,000회 + AES-256-GCM. 매 저장마다 새 salt/IV. 키·비밀번호·토큰은 저장소에 업로드하지 않음.
