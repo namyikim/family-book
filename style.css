@@ -3,3 +3,5 @@
 .content{min-width:0}.tree-scroll{max-width:100%;overflow:auto;background:#f8faff;border:1px solid #e0e6f0;border-radius:12px}.family-tree{display:block}.parent-line{fill:none;stroke:#5879ae;stroke-width:2}.spouse-line{fill:none;stroke:#b17c98;stroke-width:2;stroke-dasharray:6 5}.tree-person{cursor:pointer}.tree-person rect{fill:white;stroke:#b7c9e4;stroke-width:1.5}.tree-person:hover rect,.tree-person:focus rect,.tree-person.selected rect{fill:#eaf1ff;stroke:#3159ad;stroke-width:2}.tree-person text{fill:#24344c;font-size:16px;font-weight:650}.tree-person .tree-birth{font-size:12px;fill:#67778d;font-weight:400}.tree-details{margin-top:20px}.tree-details summary{cursor:pointer;color:#3159ad}
 
 fieldset{border:1px solid #d6dfec;border-radius:10px;margin:16px 0;padding:12px 16px}legend{font-weight:650;color:#3159ad}.relation-choices{display:flex;flex-wrap:wrap;gap:8px 20px}.relation-choices label{display:flex;align-items:center;gap:8px;margin:8px 0}.relation-choices input{width:20px;height:20px;margin:0}
+
+.remember-choice{display:flex;align-items:center;gap:10px}.remember-choice input{width:20px;height:20px;margin:0}
