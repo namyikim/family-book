@@ -59,3 +59,31 @@ test('husband sits left of wife and 친가 stays left of 외가',()=>{
  assert(r.sides.paternal.has('uncle')&&r.sides.maternal.has('aunt')&&!r.sides.paternal.has('me')&&!r.sides.maternal.has('me'));
  const html=els['#records'].innerHTML;assert(html.includes('친가 · 아버지 쪽'));assert(html.includes('외가 · 어머니 쪽'));
 });
+test('sibling linked without parents sits beside their sibling on the right family side',()=>{
+ const {ctx,els}=setup();
+ vm.runInContext(`data.people=[
+ {id:'brother',name:'조용무',gender:'M',siblings:['sister']},
+ {id:'pgf',name:'할아버지',gender:'M',spouse:'pgm'},{id:'pgm',name:'할머니',gender:'F',spouse:'pgf'},
+ {id:'father',name:'아버지',gender:'M',parents:['pgf','pgm'],spouse:'sister'},
+ {id:'uncle',name:'큰아버지',gender:'M',parents:['pgf','pgm']},
+ {id:'sister',name:'조용옥',gender:'F',spouse:'father',siblings:['brother']},
+ {id:'me',name:'나',parents:['father','sister']}
+ ];personId='me';renderTree();`,ctx);
+ const r=vm.runInContext(`familyTreeLayout(data.people,'me')`,ctx),pos=id=>r.positions.get(id);
+ assert.equal(r.components.length,1);assert.equal(pos('brother').y,pos('sister').y);
+ assert(pos('brother').x>pos('sister').x);assert(pos('uncle').x<pos('father').x);
+ assert(r.sides.maternal.has('brother'));assert(r.sides.paternal.has('uncle'));
+ assert(els['#records'].innerHTML.includes('조용옥 · 조용무 (형제자매)')||els['#records'].innerHTML.includes('조용무 · 조용옥 (형제자매)'));
+});
+test('sibling without parents inherits the registered parents of a sibling',()=>{
+ const {ctx}=setup();
+ const r=vm.runInContext(`familyTreeLayout([{id:'gf',name:'GF'},{id:'a',name:'A',parents:['gf']},{id:'b',name:'B',siblings:['a']}])`,ctx);
+ assert.deepEqual([...r.parentsOf.get('b')],['gf']);assert.equal(r.positions.get('a').y,r.positions.get('b').y);
+});
+test('saving siblings links both people and unlinking removes both sides',()=>{
+ const {ctx}=setup();
+ let next=vm.runInContext(`updateFamilyRelations([{id:'a',name:'A'},{id:'b',name:'B'}],{id:'a',name:'A',parents:[],siblings:['b']},[])`,ctx);
+ assert.deepEqual([...next.find(x=>x.id==='b').siblings],['a']);
+ ctx.next=next;next=vm.runInContext(`updateFamilyRelations(next,{id:'a',name:'A',parents:[],siblings:[]},[])`,ctx);
+ assert.equal(next.find(x=>x.id==='b').siblings,undefined);
+});
