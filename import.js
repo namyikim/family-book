@@ -97,14 +97,18 @@
         photos: (Array.isArray(e.photos) ? e.photos : []).filter(ph => ph && typeof ph.url === 'string' && PHOTO.test(ph.url)).map(ph => ({ url: ph.url, caption: typeof ph.caption === 'string' ? ph.caption.slice(0, 200) : '' }))
       };
       // "update": true인 기록은 같은 id의 기존 기록(같은 사람)에서 파일에 적힌 항목만 새 내용으로 바꿉니다. 사진은 파일에 photos가 있을 때만 통째로 바꿉니다.
-      const prev = e.update === true && typeof e.id === 'string' && data.events.find(x => x.id === e.id && x.personId === personId);
+      // id를 모를 때는 "match": {"stage": "출생"}처럼 그 사람의 단계로 찾습니다(그 단계 기록이 정확히 하나일 때만). "fields"를 주면 그 항목만 바꿉니다.
+      const byStage = e.update === true && e.match && STAGES.includes(e.match.stage) ? data.events.filter(x => x.personId === personId && x.stage === e.match.stage) : [];
+      const prev = e.update === true && ((typeof e.id === 'string' && data.events.find(x => x.id === e.id && x.personId === personId)) || (byStage.length === 1 && byStage[0]));
       if (prev) {
-        const keys = ['date', 'title', 'stage', 'place', 'body', 'source'].filter(k => Object.prototype.hasOwnProperty.call(e, k));
+        let keys = ['date', 'title', 'stage', 'place', 'body', 'source'].filter(k => Object.prototype.hasOwnProperty.call(e, k));
         if (Array.isArray(e.photos)) keys.push('photos');
+        if (Array.isArray(e.fields)) keys = keys.filter(k => e.fields.includes(k));
         const changed = keys.filter(k => JSON.stringify(prev[k]) !== JSON.stringify(event[k]));
         if (changed.length) { changed.forEach(k => { prev[k] = event[k]; }); summary.updated++; } else summary.skipped++;
         return;
       }
+      if (byStage.length > 1) { summary.skipped++; return; } // 어느 기록인지 모호하면 건드리지 않음
       const exists = data.events.some(x => x.id === event.id || (x.personId === personId && x.date === date && x.title === title));
       if (exists) { summary.skipped++; return; }
       data.events.push(event);
