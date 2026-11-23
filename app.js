@@ -12,7 +12,23 @@ function scheduleFormSave(f){formPending=true;formRevision++;clearTimeout(formTi
 async function autosaveForm(f){if(!f.closest('dialog').open||!formPending)return;if(busy||formSaving){formTimer=setTimeout(()=>autosaveForm(f),500);return;}if(!f.checkValidity()){f.querySelector('.save-status').textContent='아직 저장되지 않았습니다. 이름 또는 기록의 시기·제목 등 필수 항목을 입력해 주세요.';return;}await f.onsubmit({preventDefault(){},target:f,auto:true});}
 
 function validate(d){if(!d||d.version!==1||!Array.isArray(d.people)||!Array.isArray(d.events))throw Error('지원하지 않는 기록 형식입니다.');if(d.people.some(p=>typeof p.id!=='string'||typeof p.name!=='string')||d.events.some(e=>typeof e.id!=='string'||typeof e.personId!=='string'||typeof e.title!=='string'||!Array.isArray(e.photos)))throw Error('기록 형식이 손상되었습니다.');return d;}
-async function api(path,options={}){const r=await fetch('https://api.github.com/repos/'+session.owner+'/'+session.repo+path,{...options,cache:'no-store',headers:{Accept:'application/vnd.github+json','Content-Type':'application/json',Authorization:'Bearer '+session.token,'X-GitHub-Api-Version':'2022-11-28',...options.headers}});if(!r.ok){const err=Error(r.status===409||r.status===422?'다른 기기에서 변경되었습니다. 백업 후 다시 접속해 주세요.':r.status===401||r.status===403?'토큰 권한·만료 또는 API 사용량을 확인해 주세요.':'GitHub 연결 실패 ('+r.status+')');err.status=r.status;throw err;}return r;}
+function githubError(status,detail,remaining,method){
+ let reason='GitHub 요청이 실패했습니다.';
+ if(status===401)reason='로그인 토큰이 유효하지 않거나 만료됐습니다.';
+ else if(status===403||status===429){
+  if(remaining==='0'||/rate limit|abuse/i.test(detail))reason='GitHub 요청 한도에 도달했습니다. 잠시 후 다시 저장해 주세요.';
+  else if(/resource not accessible/i.test(detail))reason=method==='PUT'?'이 토큰에 family-data 파일 쓰기 권한이 없습니다. Contents를 Read and write로 설정해 주세요.':'이 토큰에 저장소 접근 권한이 없습니다.';
+  else reason='GitHub에서 접근을 거부했습니다. 토큰의 저장소 권한 또는 계정 정책을 확인해 주세요.';
+ }else if(status===409)reason='다른 기기에서 서버 기록이 변경됐습니다. 현재 입력을 백업한 뒤 최신 기록과 비교해야 합니다.';
+ else if(status===422)reason='저장 요청을 GitHub가 처리하지 못했습니다. 아래 상세 원인을 확인해 주세요.';
+ else if(status===404)reason='저장소 또는 파일을 찾을 수 없거나 접근 권한이 없습니다.';
+ const err=Error('['+status+' / '+method+'] '+reason+(detail?' · '+detail.slice(0,250):''));err.status=status;return err;
+}
+async function api(path,options={}){
+ let r;try{r=await fetch('https://api.github.com/repos/'+session.owner+'/'+session.repo+path,{...options,cache:'no-store',headers:{Accept:'application/vnd.github+json','Content-Type':'application/json',Authorization:'Bearer '+session.token,'X-GitHub-Api-Version':'2022-11-28',...options.headers}});}catch{throw Error('[연결 오류] GitHub 서버에 연결하지 못했습니다. 네트워크 상태를 확인해 주세요.');}
+ if(!r.ok){let detail='';try{const body=await r.json();detail=typeof body.message==='string'?body.message:'';}catch{}throw githubError(r.status,detail,r.headers.get('x-ratelimit-remaining'),options.method||'GET');}
+ return r;
+}
 async function privateRepo(){const repo=await(await api('')).json();if(repo.private!==true)throw Error('개인 기록은 비공개(Private) 저장소에만 저장할 수 있습니다.');}
 async function load(){await privateRepo();try{const r=await(await api('/contents/family.enc.json')).json();sha=r.sha;let envelope;if(r.content)envelope=JSON.parse(new TextDecoder().decode(FamilyCrypto.fromBase64(r.content.replace(/\s/g,''))));else envelope=await(await api('/contents/family.enc.json',{headers:{Accept:'application/vnd.github.raw+json'}})).json();data=validate(await FamilyCrypto.decryptJSON(envelope,session.password));}catch(e){if(e.status!==404)throw e;sha=null;data={version:1,people:[],events:[]};}}
 async function save(){if(demo){dirty=false;notice('둘러보기 · 서버에 저장되지 않습니다.');return true;}if(busy)return;busy=true;notice('암호화하여 저장 중…');try{await privateRepo();const envelope=await FamilyCrypto.encryptJSON(data,session.password);let recoveryAvailable=true;try{if(recoveryUnarchived)throw Error('이전 복구본 보존 중');localStorage.setItem('family-recovery:'+session.owner+'/'+session.repo,JSON.stringify({baseSha:sha,envelope}));}catch{recoveryAvailable=false;}const payload={message:'Update encrypted family archive',content:FamilyCrypto.toBase64(new TextEncoder().encode(JSON.stringify(envelope)))};if(sha)payload.sha=sha;const r=await(await api('/contents/family.enc.json',{method:'PUT',body:JSON.stringify(payload)})).json();sha=r.content.sha;dirty=false;try{if(!recoveryUnarchived)localStorage.removeItem('family-recovery:'+session.owner+'/'+session.repo);}catch{}notice('저장 완료 · 비공개 저장소 · '+new Date().toLocaleTimeString('ko-KR')+(recoveryAvailable?'':' · 기기 복구본 저장 공간 부족, 서버 저장은 완료됐습니다.'));return true;}catch(e){notice('저장 실패 · '+e.message+' 입력은 현재 화면에 유지됩니다. 암호화 백업을 내려받으세요.');return false;}finally{busy=false;}}
