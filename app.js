@@ -118,8 +118,10 @@ function familySides(people,byId,focusId,parentsOf,siblingsOf){
   if(treeGender(father,byId)!=='M'&&treeGender(mother,byId)!=='F')return null;
   const line=walk([father.id,mother.id],down),paternal=side(father,line),maternal=side(mother,line);
   return paternal.size+maternal.size>2?{father,mother,paternal,maternal,score:paternal.size+maternal.size}:null;};
- let best=byId.get(focusId)&&couple(byId.get(focusId));
- if(!best)for(const p of people){const c=couple(p);if(c&&(!best||c.score>best.score))best=c;}
+ let best=null;
+ // One fixed point of view (the couple with the most relatives on both sides), so the
+ // sides do not jump around when another person is selected.
+ for(const p of people){const c=couple(p);if(c&&(!best||c.score>best.score))best=c;}
  if(!best)return null;
  const {father,mother,paternal,maternal}=best;
  for(const id of [...paternal])if(maternal.has(id)&&id!==father.id&&id!==mother.id){paternal.delete(id);maternal.delete(id);}
@@ -175,14 +177,37 @@ function familyTreeLayout(people,focusId){
   // Keep siblings and their partners together, then order ancestral branches
   // toward their descendants. 친가 stays left of 외가 in every row.
   let width=arrange();
-  for(let pass=0;pass<8;pass++){
+  // End with a downward sweep so every row is ordered under its own parents:
+  // a husband's siblings stay under his parents (left), a wife's under hers (right).
+  for(let pass=0;pass<9;pass++){
    const down=pass%2===0;
    for(const rank of down?ranks:[...ranks].reverse()){
-    const row=rows.get(rank),bary=new Map(row.map(i=>{const xs=groups[i].members.flatMap(p=>[...((down?parentsOf:childrenOf).get(p.id)||[]),...(siblingsOf.get(p.id)||[]).filter(x=>groupOf.get(x)!==i)]).map(px);return [i,xs.length?xs.reduce((s,x)=>s+x,0)/xs.length:groups[i].x];}));
-    row.sort((a,b)=>groups[a].side-groups[b].side||bary.get(a)-bary.get(b));arrange();
+    // Only groups with relatives in the sweep direction move; the others keep their
+    // slot, so positions measured in different rows are never compared directly.
+    const row=rows.get(rank),bary=new Map();
+    for(const i of row){const xs=groups[i].members.flatMap(p=>{const rel=(down?parentsOf:childrenOf).get(p.id)||[];if(rel.length)return rel;return (parentsOf.get(p.id)||[]).length?[]:(siblingsOf.get(p.id)||[]).filter(x=>groupOf.get(x)!==i);}).map(px);if(xs.length)bary.set(i,xs.reduce((s,x)=>s+x,0)/xs.length);}
+    const slots=row.map((i,k)=>bary.has(i)?k:-1).filter(k=>k>=0),movable=slots.map(k=>row[k]).sort((a,b)=>bary.get(a)-bary.get(b));
+    slots.forEach((k,j)=>row[k]=movable[j]);row.sort((a,b)=>groups[a].side-groups[b].side);arrange();
    }
   }
-  width=arrange();components.push({ids,width:width+70,height:(Math.max(...ranks)+1)*200+80,rows});
+  width=arrange();
+  // Place each row under its parents (and parents over their children) while keeping
+  // the order and a fixed gap, so family lines of different branches do not cross.
+  const offset=(g,p)=>-g.members.length*105+g.members.indexOf(p)*210+105;
+  const target=(i,down)=>{const g=groups[i],ts=[];for(const p of g.members){const rel=(down?parentsOf:childrenOf).get(p.id)||[];if(rel.length)ts.push(rel.reduce((s,id)=>s+px(id),0)/rel.length-(down?offset(g,p):0));}return ts.length?ts.reduce((s,x)=>s+x,0)/ts.length:null;};
+  const place=(row,want)=>{const half=i=>groups[i].members.length*105,l=[],r=[];
+   row.forEach((i,k)=>{const prev=k?l[k-1]+half(row[k-1])+60+half(i):-Infinity;l[k]=Math.max(want[k]??prev,prev);});
+   for(let k=row.length-1;k>=0;k--){const i=row[k],next=k<row.length-1?r[k+1]-half(row[k+1])-60-half(i):Infinity;r[k]=Math.min(want[k]??next,next);}
+   row.forEach((i,k)=>{const a=l[k],b=r[k];groups[i].x=Number.isFinite(a)&&Number.isFinite(b)?(a+b)/2:Number.isFinite(a)?a:b;});
+   // Rows with no wishes at all keep their centred placement.
+  };
+  for(let pass=0;pass<6;pass++){const down=pass%2===0||pass===5;
+   for(const rank of down?ranks:[...ranks].reverse()){const row=rows.get(rank),want=row.map(i=>target(i,down));if(want.every(w=>w==null))continue;
+    // Fill gaps for groups without a wish next to their neighbours.
+    place(row,want);}}
+  const left=Math.min(...ids.map(i=>groups[i].x-groups[i].members.length*105));ids.forEach(i=>groups[i].x-=left);
+  width=Math.max(...ids.map(i=>groups[i].x+groups[i].members.length*105));
+  components.push({ids,width:width+70,height:(Math.max(...ranks)+1)*200+80,rows});
  }
  // Connected family branches first; relatives without saved links remain visible
  // in their own panel rather than being assigned a misleading generation.

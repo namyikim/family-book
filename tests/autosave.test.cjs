@@ -87,3 +87,19 @@ test('saving siblings links both people and unlinking removes both sides',()=>{
  ctx.next=next;next=vm.runInContext(`updateFamilyRelations(next,{id:'a',name:'A',parents:[],siblings:[]},[])`,ctx);
  assert.equal(next.find(x=>x.id==='b').siblings,undefined);
 });
+test("husband's siblings stay left and wife's siblings right without crossing family lines",()=>{
+ const {ctx}=setup();
+ const P=(id,o={})=>({id,name:id,parents:[],...o});
+ for(const viaSiblings of [false,true]){
+  ctx.P=[
+  P('hgf',{spouse:'hgm'}),P('hgm',{spouse:'hgf'}),P('wgf',{spouse:'wgm'}),P('wgm',{spouse:'wgf'}),
+  P('wsib1',viaSiblings?{siblings:['wife']}:{parents:['wgf','wgm']}),P('wsib2',viaSiblings?{siblings:['wife']}:{parents:['wgf','wgm']}),
+  P('hsib',{parents:['hgf','hgm']}),
+  P('husband',{parents:['hgf','hgm'],spouse:'wife'}),P('wife',{parents:['wgf','wgm'],spouse:'husband'}),
+  P('wsib3',{parents:['wgf','wgm']}),P('kid',{parents:['husband','wife']})];
+  const r=vm.runInContext(`familyTreeLayout(P,'husband')`,ctx),x=id=>r.positions.get(id).x;
+  assert(x('hsib')<x('husband'));assert.equal(x('wife')-x('husband'),210);
+  for(const id of ['wsib1','wsib2','wsib3'])assert(x(id)>x('wife'),id);
+  assert(x('hgf')<x('wgf'));
+ }
+});
