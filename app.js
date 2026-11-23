@@ -37,7 +37,7 @@ function render(){ $('#search').hidden=currentView==='tree';$('#addEvent').hidde
 function sorted(pid){return data.events.filter(e=>e.personId===pid).sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title));}
 function imageMarkup(p){return typeof p.url==='string'&&/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(p.url)?`<img src="${p.url}" alt="${esc(p.caption||'기록 사진')}" loading="lazy">`:'';}
 function renderRecords(){const q=$('#search').value.toLowerCase();const rows=sorted(personId).filter(e=>(stage==='전체 기록'||e.stage===stage)&&[e.title,e.body,e.place].join(' ').toLowerCase().includes(q));$('#records').innerHTML=rows.length?rows.map(e=>`<article class="record"><div class="date">${esc(e.date)} · ${esc(e.stage)}</div><h3>${esc(e.title)}</h3><p class="hint">${esc(e.place)}</p><div class="story">${esc(e.body)}</div><div class="photos">${e.photos.map(imageMarkup).join('')}</div>${e.source?`<p class="hint">자료 출처: ${esc(e.source)}</p>`:''}<button data-event="${esc(e.id)}">기록 수정</button></article>`).join(''):'<div class="empty">아직 이곳에 기록된 이야기가 없어요.<br>출생, 입학, 첫 만남처럼 기억하고 싶은 순간을 남겨보세요.</div>';}
-function personEditor(edit=false){resetFormSave();const f=$('#personForm');f.reset();f.querySelector('.formError').textContent='';const p=edit?person():null;for(const k of ['id','name','birth','bio'])f.elements[k].value=p?.[k]||'';const others=data.people.filter(x=>x.id!==p?.id);for(const [container,field,selected] of [['#parentChoices','parents',p?.parents||[]],['#childChoices','children',data.people.filter(x=>(x.parents||[]).includes(p?.id)).map(x=>x.id)]]){
+function personEditor(edit=false){resetFormSave();const f=$('#personForm');f.reset();f.querySelector('.formError').textContent='';const p=edit?person():null;for(const k of ['id','name','gender','birth','bio'])f.elements[k].value=p?.[k]||'';const others=data.people.filter(x=>x.id!==p?.id);for(const [container,field,selected] of [['#parentChoices','parents',p?.parents||[]],['#childChoices','children',data.people.filter(x=>(x.parents||[]).includes(p?.id)).map(x=>x.id)]]){
 $(container).innerHTML=others.length?others.map(x=>`<label><input type="checkbox" name="${field}" value="${esc(x.id)}" ${selected.includes(x.id)?'checked':''}>${esc(x.name)}</label>`).join(''):'<p class="hint">선택할 다른 가족이 없습니다. 이 인물을 저장한 뒤 ＋ 가족으로 가족을 추가해 주세요.</p>';
 }f.elements.spouse.innerHTML='<option value="">선택 안 함</option>'+others.map(x=>`<option value="${esc(x.id)}" ${p?.spouse===x.id?'selected':''}>${esc(x.name)}</option>`).join('');$('#personDialog').showModal();}
 function eventEditor(id){resetFormSave();const f=$('#eventForm');f.reset();f.querySelector('.formError').textContent='';const e=data.events.find(x=>x.id===id);f.elements.stage.innerHTML=stages.slice(1).map(s=>`<option>${s}</option>`).join('');for(const k of ['id','date','title','place','body','source'])f.elements[k].value=e?.[k]||'';f.elements.stage.value=e?.stage||(stage==='전체 기록'?'기타':stage);photos=structuredClone(e?.photos||[]);showPhotos();$('#deleteEvent').hidden=!e;$('#eventDialog').showModal();}
@@ -98,21 +98,51 @@ $('#photoList').onclick=e=>{const b=e.target.closest('[data-remove-photo]');if(b
 $('#retry').onclick=()=>{const f=document.querySelector('dialog[open] form');if(f&&formPending)autosaveForm(f);else save();};$('#lock').onclick=async()=>{if(busy||formSaving)return;if((dirty||formPending)&&!confirm('미저장 변경이 있습니다. 로그아웃할까요?'))return;try{await DeviceLogin.forget();}catch(e){$('#loginError').textContent='로그인 유지는 해제됐지만 기기 정보 삭제에 실패했습니다. 브라우저의 사이트 데이터를 삭제해 주세요.';}pendingRecovery=null;recoveryUnarchived=false;$('#recoveryNotice').hidden=true;resetFormSave();showConnectionSettings(!ConnectionVault.exists());session=null;data={version:1,people:[],events:[]};photos=[];sha=null;dirty=false;$('#workspace').hidden=true;$('#gate').hidden=false;$('#people').replaceChildren();$('#records').replaceChildren();$('#printArea').replaceChildren();for(const f of [$('#personForm'),$('#eventForm')])f.reset();$('#photoList').replaceChildren();$('#parentChoices').replaceChildren();$('#childChoices').replaceChildren();};
 $('#backup').onclick=async()=>{if(demo){alert('실제 비공개 기록에 연결한 뒤 백업할 수 있습니다.');return;}try{const blob=new Blob([JSON.stringify(await FamilyCrypto.encryptJSON(data,session.password))],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='family-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){notice(e.message);}};
 // Solve generations in both directions so a shorter ancestral branch is not
-// incorrectly placed above a longer branch. Spouses occupy a single block.
-function familyTreeLayout(people){
+// incorrectly placed above a longer branch. Spouses occupy a single block with
+// the husband on the left and the wife on the right.
+function treeGender(p,byId){if(p.gender==='M'||p.gender==='F')return p.gender;const s=byId.get(p.spouse);return s?.gender==='M'?'F':s?.gender==='F'?'M':'';}
+// 친가/외가: pick the parents of the selected person (or, failing that, the couple
+// with the most recorded ancestors on both sides) and mark each side's relatives.
+function familySides(people,byId,focusId){
+ const childrenOf=new Map();for(const p of people)for(const id of new Set(p.parents||[]))if(byId.has(id)){if(!childrenOf.has(id))childrenOf.set(id,[]);childrenOf.get(id).push(p.id);}
+ const walk=(start,next)=>{const out=new Set(),todo=[...start];while(todo.length){const id=todo.pop();if(out.has(id))continue;out.add(id);todo.push(...next(id));}return out;};
+ const up=id=>(byId.get(id)?.parents||[]).filter(x=>byId.has(x)),down=id=>childrenOf.get(id)||[];
+ const couple=child=>{const ps=[...new Set(child.parents||[])].map(id=>byId.get(id)).filter(Boolean);if(ps.length!==2)return null;
+  let [father,mother]=ps;if(treeGender(father,byId)==='F'||treeGender(mother,byId)==='M')[father,mother]=[mother,father];
+  if(treeGender(father,byId)!=='M'&&treeGender(mother,byId)!=='F')return null;
+  const fa=walk(up(father.id),up),mo=walk(up(mother.id),up);return fa.size&&mo.size?{father,mother,score:fa.size+mo.size}:null;};
+ let best=byId.get(focusId)&&couple(byId.get(focusId));
+ if(!best)for(const p of people){const c=couple(p);if(c&&(!best||c.score>best.score))best=c;}
+ if(!best)return null;
+ const line=walk([best.father.id,best.mother.id],down);
+ const side=parent=>{const anc=walk(up(parent.id),up),set=walk([...anc],down);for(const id of line)set.delete(id);set.add(parent.id);
+  for(const id of [...set]){const s=byId.get(id).spouse;if(byId.has(s)&&!line.has(s))set.add(s);}return set;};
+ const paternal=side(best.father),maternal=side(best.mother);
+ for(const id of paternal)if(maternal.has(id)&&id!==best.mother.id){paternal.delete(id);maternal.delete(id);}
+ return {father:best.father,mother:best.mother,paternal,maternal};
+}
+function familyTreeLayout(people,focusId){
  const byId=new Map(people.map(p=>[p.id,p])),root=new Map(people.map(p=>[p.id,p.id]));
  const find=id=>{while(root.get(id)!==id)id=root.get(id);return id;};
  for(const p of people)if(byId.has(p.spouse)&&p.spouse!==p.id)root.set(find(p.spouse),find(p.id));
  const groups=[],groupOf=new Map(),groupByRoot=new Map();
- for(const p of people){const r=find(p.id);if(!groupByRoot.has(r)){groupByRoot.set(r,groups.length);groups.push({members:[],neighbors:[],rank:0,x:0});}const i=groupByRoot.get(r);groups[i].members.push(p);groupOf.set(p.id,i);}
- const links=[],seen=new Set(),warnings=[];
+ for(const p of people){const r=find(p.id);if(!groupByRoot.has(r)){groupByRoot.set(r,groups.length);groups.push({members:[],neighbors:[],rank:0,x:0,side:0});}const i=groupByRoot.get(r);groups[i].members.push(p);groupOf.set(p.id,i);}
+ const order={M:0,'':1,F:2};for(const g of groups)g.members.sort((a,b)=>order[treeGender(a,byId)]-order[treeGender(b,byId)]);
+ const links=[],seen=new Set(),warnings=[],parentsOf=new Map(),childrenOf=new Map();
  for(const child of people)for(const id of new Set(child.parents||[])){
   if(!byId.has(id)){warnings.push(child.name+'의 부모 정보에 등록되지 않은 인물이 있습니다.');continue;}
   const from=groupOf.get(id),to=groupOf.get(child.id),key=from+':'+to;
   if(from===to){warnings.push(byId.get(id).name+' · '+child.name+': 배우자와 부모·자녀 관계가 겹칩니다.');continue;}
+  if(!parentsOf.has(child.id))parentsOf.set(child.id,[]);parentsOf.get(child.id).push(id);
+  if(!childrenOf.has(id))childrenOf.set(id,[]);childrenOf.get(id).push(child.id);
   if(seen.has(key))continue;seen.add(key);links.push({from,to});
   groups[from].neighbors.push({id:to,delta:1});groups[to].neighbors.push({id:from,delta:-1});
  }
+ const sides=familySides(people,byId,focusId);
+ if(sides)for(const g of groups){const pat=g.members.some(p=>sides.paternal.has(p.id)),mat=g.members.some(p=>sides.maternal.has(p.id));g.side=pat&&!mat?-1:mat&&!pat?1:0;}
+ // Centre of one person's box, so a husband's parents sit above the husband
+ // (left) and a wife's parents above the wife (right).
+ const px=id=>{const g=groups[groupOf.get(id)];return g.x-g.members.length*105+g.members.indexOf(byId.get(id))*210+105;};
  const visited=new Set(),components=[];
  for(let seed=0;seed<groups.length;seed++){
   if(visited.has(seed))continue;const ids=[seed];visited.add(seed);groups[seed].rank=0;
@@ -128,13 +158,13 @@ function familyTreeLayout(people){
    return widest;
   };
   // Keep siblings and their partners together, then order ancestral branches
-  // toward their descendants. Stable sweeps reduce crossings without moving spouses apart.
+  // toward their descendants. 친가 stays left of 외가 in every row.
   let width=arrange();
   for(let pass=0;pass<8;pass++){
    const down=pass%2===0;
    for(const rank of down?ranks:[...ranks].reverse()){
-    const row=rows.get(rank),bary=i=>{const ns=groups[i].neighbors.filter(n=>down?n.delta===-1:n.delta===1);return ns.length?ns.reduce((s,n)=>s+groups[n.id].x,0)/ns.length:groups[i].x;};
-    row.sort((a,b)=>bary(a)-bary(b));arrange();
+    const row=rows.get(rank),bary=new Map(row.map(i=>{const xs=groups[i].members.flatMap(p=>(down?parentsOf:childrenOf).get(p.id)||[]).map(px);return [i,xs.length?xs.reduce((s,x)=>s+x,0)/xs.length:groups[i].x];}));
+    row.sort((a,b)=>groups[a].side-groups[b].side||bary.get(a)-bary.get(b));arrange();
    }
   }
   width=arrange();components.push({ids,width:width+70,height:(Math.max(...ranks)+1)*200+80,rows});
@@ -147,13 +177,13 @@ function familyTreeLayout(people){
   c.top=offsetY;for(const i of c.ids){const g=groups[i],start=g.x-g.members.length*210/2+50;g.members.forEach((p,k)=>positions.set(p.id,{x:start+k*210,y:offsetY+55+g.rank*200,group:i}));}
   offsetY+=c.height+30;width=Math.max(width,c.width);
  }
- return {groups,groupOf,positions,components,width,height:Math.max(200,offsetY),warnings:[...new Set(warnings)]};
+ return {groups,groupOf,positions,components,sides,width,height:Math.max(200,offsetY),warnings:[...new Set(warnings)]};
 }
 let treeScale='fit';
 function renderTree(){
  $('#title').textContent='우리 가족 전체 가계도';$('#personMeta').textContent='전체 가족 · 부모 · 배우자 · 자녀';
  if(!data.people.length){$('#records').innerHTML='<div class="empty">＋ 가족 버튼으로 가족을 등록해 주세요.</div>';return;}
- const people=data.people,byId=new Map(people.map(p=>[p.id,p])),layout=familyTreeLayout(people),{positions,width,height}=layout;
+ const people=data.people,byId=new Map(people.map(p=>[p.id,p])),layout=familyTreeLayout(people,personId),{positions,width,height}=layout;
  let edges='',nodes='',panels='';const spouseSeen=new Set(),families=new Map();
  for(const c of layout.components)if(layout.components.length>1){const label=c.ids.length===1&&layout.groups[c.ids[0]].members.length===1?'관계 미연결':'가족 관계';panels+=`<text x="35" y="${c.top+25}" fill="#67778d" font-size="14">${label}</text>`;}
  for(const child of people){
@@ -178,12 +208,16 @@ function renderTree(){
  for(const p of people){
   const a=positions.get(p.id),partner=byId.get(p.spouse),b=positions.get(p.spouse),key=[p.id,p.spouse].sort().join('|');
   if(b&&p.id!==p.spouse&&!spouseSeen.has(key)){spouseSeen.add(key);const left=a.x<b.x?a:b,right=a.x<b.x?b:a;edges+=`<path class="spouse-line" d="M ${left.x+180} ${left.y+42} H ${right.x}"><title>${esc(p.name)} · ${esc(partner.name)} (배우자)</title></path>`;}
-  nodes+=`<g class="tree-person ${p.id===personId?'selected':''}" data-tree-person="${esc(p.id)}" role="button" tabindex="0" aria-label="${esc(p.name)} 인물 정보 수정"><rect x="${a.x}" y="${a.y}" width="180" height="84" rx="12"/><text x="${a.x+90}" y="${a.y+34}" text-anchor="middle">${esc(p.name.length>11?p.name.slice(0,10)+'…':p.name)}</text><text class="tree-birth" x="${a.x+90}" y="${a.y+60}" text-anchor="middle">${esc(p.birth||'출생일 미등록')}</text><title>${esc(p.name)}</title></g>`;
+  nodes+=`<g class="tree-person ${p.id===personId?'selected':''} ${layout.sides?.paternal.has(p.id)?'side-paternal':layout.sides?.maternal.has(p.id)?'side-maternal':''}" data-tree-person="${esc(p.id)}" role="button" tabindex="0" aria-label="${esc(p.name)} 인물 정보 수정"><rect x="${a.x}" y="${a.y}" width="180" height="84" rx="12"/><text x="${a.x+90}" y="${a.y+34}" text-anchor="middle">${esc(p.name.length>11?p.name.slice(0,10)+'…':p.name)}</text><text class="tree-birth" x="${a.x+90}" y="${a.y+60}" text-anchor="middle">${esc(p.birth||'출생일 미등록')}</text><title>${esc(p.name)}</title></g>`;
+ }
+ if(layout.sides)for(const [set,label,cls] of [[layout.sides.paternal,'친가 · '+layout.sides.father.name+' 쪽','side-paternal'],[layout.sides.maternal,'외가 · '+layout.sides.mother.name+' 쪽','side-maternal']]){
+  const ps=[...set].map(id=>positions.get(id)),top=Math.min(...ps.map(p=>p.y)),row=ps.filter(p=>p.y===top),x=(Math.min(...row.map(p=>p.x))+Math.max(...row.map(p=>p.x))+180)/2;
+  panels+=`<text class="side-label ${cls}" x="${x}" y="${top-14}" text-anchor="middle">${esc(label)}</text>`;
  }
  const warnings=layout.warnings.length?`<p role="status" class="formError">${layout.warnings.map(esc).join('<br>')}</p>`:'';
  const name=id=>byId.get(id)?.name||'미등록';
  const available=$('#records').clientWidth||900,scale=treeScale==='fit'?Math.min(1,available/width):treeScale;
- $('#records').innerHTML=`<p class="hint">전체 가족을 표시합니다. 부부는 같은 높이, 부모·자녀는 한 세대 간격으로 배치합니다.<br>실선: 부모·자녀 · 점선: 배우자 · 인물을 누르면 정보를 수정할 수 있습니다.</p><div class="actions"><button type="button" data-tree-zoom="fit">화면에 맞추기</button><button type="button" data-tree-zoom="in" aria-label="가계도 확대">확대</button><button type="button" data-tree-zoom="out" aria-label="가계도 축소">축소</button></div>${warnings}<div class="tree-scroll" style="margin-top:12px;max-height:75vh" tabindex="0" aria-label="가계도 스크롤 영역"><svg class="family-tree" width="${width*scale}" height="${height*scale}" viewBox="0 0 ${width} ${height}" aria-label="우리 가족 전체 가계도">${panels}${edges}${nodes}</svg></div><details class="tree-details"><summary>가족 관계를 글로 보기</summary>${people.map(p=>`<article class="relation"><h3>${esc(p.name)}</h3><p>부모: ${esc((p.parents||[]).map(name).join(', ')||'미등록')}</p><p>배우자: ${esc(name(p.spouse))}</p><p>자녀: ${esc(people.filter(x=>(x.parents||[]).includes(p.id)).map(x=>x.name).join(', ')||'미등록')}</p></article>`).join('')}</details>`;
+ $('#records').innerHTML=`<p class="hint">전체 가족을 표시합니다. 부부는 같은 높이에 남편 왼쪽·아내 오른쪽, 부모·자녀는 한 세대 간격으로 배치합니다. 친가는 왼쪽, 외가는 오른쪽에 색을 나눠 표시합니다(인물 정보에 성별을 입력해 주세요).<br>실선: 부모·자녀 · 점선: 배우자 · 인물을 누르면 정보를 수정할 수 있습니다.</p><div class="actions"><button type="button" data-tree-zoom="fit">화면에 맞추기</button><button type="button" data-tree-zoom="in" aria-label="가계도 확대">확대</button><button type="button" data-tree-zoom="out" aria-label="가계도 축소">축소</button></div>${warnings}<div class="tree-scroll" style="margin-top:12px;max-height:75vh" tabindex="0" aria-label="가계도 스크롤 영역"><svg class="family-tree" width="${width*scale}" height="${height*scale}" viewBox="0 0 ${width} ${height}" aria-label="우리 가족 전체 가계도">${panels}${edges}${nodes}</svg></div><details class="tree-details"><summary>가족 관계를 글로 보기</summary>${people.map(p=>`<article class="relation"><h3>${esc(p.name)}</h3><p>부모: ${esc((p.parents||[]).map(name).join(', ')||'미등록')}</p><p>배우자: ${esc(name(p.spouse))}</p><p>자녀: ${esc(people.filter(x=>(x.parents||[]).includes(p.id)).map(x=>x.name).join(', ')||'미등록')}</p></article>`).join('')}</details>`;
 }
 $('#relations').onclick=()=>{currentView='tree';render();};
 function editTreePerson(target){const node=target.closest('[data-tree-person]');if(!node)return;personId=node.dataset.treePerson;render();personEditor(true);}

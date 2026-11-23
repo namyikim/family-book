@@ -50,7 +50,8 @@
       const birth = text(p.birth, 10, where + ' 출생일');
       if (birth && !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(birth)) throw Error(where + ' 출생일은 YYYY-MM-DD 형식이어야 합니다.');
       const id = typeof p.id === 'string' && p.id && !data.people.some(x => x.id === p.id) ? p.id : newId();
-      data.people.push({ id, name, birth, bio: text(p.bio, 2000, where + ' 소개'), parents: [], spouse: '', _src: p });
+      const gender = ['M', '남', '남자', 'male'].includes(p.gender) ? 'M' : ['F', '여', '여자', 'female'].includes(p.gender) ? 'F' : '';
+      data.people.push({ id, name, gender, birth, bio: text(p.bio, 2000, where + ' 소개'), parents: [], spouse: '', _src: p });
       map.set(key, id);
       summary.newPeople.push(name);
     });

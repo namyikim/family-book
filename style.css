@@ -5,3 +5,9 @@
 fieldset{border:1px solid #d6dfec;border-radius:10px;margin:16px 0;padding:12px 16px}legend{font-weight:650;color:#3159ad}.relation-choices{display:flex;flex-wrap:wrap;gap:8px 20px}.relation-choices label{display:flex;align-items:center;gap:8px;margin:8px 0}.relation-choices input{width:20px;height:20px;margin:0}
 
 .remember-choice{display:flex;align-items:center;gap:10px}.remember-choice input{width:20px;height:20px;margin:0}
+.tree-person.side-paternal rect{fill:#eef4ff;stroke:#7d9fd6}
+.tree-person.side-maternal rect{fill:#fff1f3;stroke:#d99aa8}
+.side-label{font-size:14px;font-weight:700}
+.side-label.side-paternal{fill:#3159ad}
+.side-label.side-maternal{fill:#b4475f}
+.tree-person.selected rect,.tree-person:focus rect{stroke:#3159ad;stroke-width:3}

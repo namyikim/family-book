@@ -39,3 +39,23 @@ test('inconsistent generations are reported instead of looping or inventing rela
  const result=vm.runInContext(`familyTreeLayout([{id:'a',name:'A',parents:['b']},{id:'b',name:'B',parents:['a']}])`,ctx);
  assert(result.warnings.length>0);assert.equal(result.positions.size,2);
 });
+test('husband sits left of wife and 친가 stays left of 외가',()=>{
+ const {ctx,els}=setup();
+ // Data order deliberately lists the wife and the maternal side first.
+ vm.runInContext(`data.people=[
+ {id:'mgf',name:'외할아버지',gender:'M',spouse:'mgm'},
+ {id:'mgm',name:'외할머니',gender:'F',spouse:'mgf'},
+ {id:'mother',name:'어머니',gender:'F',parents:['mgf','mgm'],spouse:'father'},
+ {id:'aunt',name:'이모',gender:'F',parents:['mgf','mgm']},
+ {id:'pgm',name:'할머니',gender:'F',spouse:'pgf'},
+ {id:'pgf',name:'할아버지',spouse:'pgm'},
+ {id:'father',name:'아버지',gender:'M',parents:['pgf','pgm'],spouse:'mother'},
+ {id:'uncle',name:'큰아버지',gender:'M',parents:['pgf','pgm']},
+ {id:'me',name:'나',parents:['father','mother']}
+ ];personId='me';renderTree();`,ctx);
+ const r=vm.runInContext(`familyTreeLayout(data.people,'me')`,ctx),pos=id=>r.positions.get(id);
+ for(const [left,right] of [['father','mother'],['pgf','pgm'],['mgf','mgm']])assert.equal(pos(right).x-pos(left).x,210);
+ assert(pos('pgm').x<pos('mgf').x);assert(pos('uncle').x<pos('father').x);assert(pos('mother').x<pos('aunt').x);
+ assert(r.sides.paternal.has('uncle')&&r.sides.maternal.has('aunt')&&!r.sides.paternal.has('me')&&!r.sides.maternal.has('me'));
+ const html=els['#records'].innerHTML;assert(html.includes('친가 · 아버지 쪽'));assert(html.includes('외가 · 어머니 쪽'));
+});
