@@ -4,8 +4,38 @@ function setup(){const els={};const el=()=>({value:'',textContent:'',hidden:fals
 function form(){const f={elements:{},querySelector:()=>({textContent:'',disabled:false}),closest:()=>({open:true,close(){}})};for(const [k,v] of Object.entries({id:'',date:'2000',title:'첫 기록',body:'내용',place:'',source:'',stage:'출생',photos:''}))f.elements[k]={value:v,files:[]};return f;}
 test('autosave updates same event and preserves newer typing while saving',async()=>{const {ctx,els}=setup();const f=form();await els['#eventForm'].onsubmit({preventDefault(){},target:f,auto:true});const id=f.elements.id.value;assert(id);f.elements.body.value='수정 내용';await els['#eventForm'].onsubmit({preventDefault(){},target:f,auto:true});assert.equal(vm.runInContext('data.events.length',ctx),1);assert.equal(vm.runInContext('data.events[0].body',ctx),'수정 내용');let finish;ctx.pending=new Promise(r=>finish=r);vm.runInContext('save=()=>pending;formPending=true',ctx);const saving=els['#eventForm'].onsubmit({preventDefault(){},target:f,auto:true});vm.runInContext('formRevision++',ctx);f.elements.body.value='추가 입력';finish(true);await saving;assert.equal(vm.runInContext('formPending',ctx),true);});
 test('failed server save leaves form pending',async()=>{const {ctx,els}=setup();vm.runInContext('save=async()=>false;formPending=true',ctx);await els['#eventForm'].onsubmit({preventDefault(){},target:form(),auto:true});assert.equal(vm.runInContext('formPending',ctx),true);});
-test('child and spouse share row and remain adjacent',()=>{const {ctx,els}=setup();vm.runInContext(`data.people=[{id:'parent',name:'부모',parents:[]},{id:'child',name:'자녀',parents:['parent'],spouse:'partner'},{id:'other',name:'다른 가족',parents:[]},{id:'partner',name:'배우자',parents:[],spouse:'child'}];personId='child';renderTree()`,ctx);const html=els['#records'].innerHTML;const box=id=>{const m=html.match(new RegExp('data-tree-person="'+id+'"[^]*?<rect x="([0-9.]+)" y="([0-9.]+)"'));return [+m[1],+m[2]]};const child=box('child'),spouse=box('partner');assert.equal(child[1],spouse[1]);assert.equal(spouse[0]-child[0],210);assert(child[1]>box('parent')[1]);assert(!html.includes('data-tree-person="other"'));});
+test('child and spouse share row and remain adjacent',()=>{const {ctx,els}=setup();vm.runInContext(`data.people=[{id:'parent',name:'부모',parents:[]},{id:'child',name:'자녀',parents:['parent'],spouse:'partner'},{id:'other',name:'다른 가족',parents:[]},{id:'partner',name:'배우자',parents:[],spouse:'child'}];personId='child';renderTree()`,ctx);const html=els['#records'].innerHTML;const box=id=>{const m=html.match(new RegExp('data-tree-person="'+id+'"[^]*?<rect x="([0-9.]+)" y="([0-9.]+)"'));return [+m[1],+m[2]]};const child=box('child'),spouse=box('partner');assert.equal(child[1],spouse[1]);assert.equal(spouse[0]-child[0],210);assert(child[1]>box('parent')[1]);assert(html.includes('data-tree-person="other"'));});
 
 test('manual save waits for server success before closing',async()=>{const {ctx,els}=setup();const f=form();let closed=0,finish;f.closest=()=>({open:true,close(){closed++}});ctx.pending=new Promise(r=>finish=r);vm.runInContext('save=()=>pending;formPending=true',ctx);const task=els['#eventForm'].onsubmit({preventDefault(){},target:f});assert.equal(closed,0);finish(true);await task;assert.equal(closed,1);});
 test('manual save failure keeps editor open',async()=>{const {ctx,els}=setup();const f=form();let closed=0;f.closest=()=>({open:true,close(){closed++}});vm.runInContext('save=async()=>false;formPending=true',ctx);await els['#eventForm'].onsubmit({preventDefault(){},target:f});assert.equal(closed,0);assert.equal(vm.runInContext('formPending',ctx),true);});
 test('manual save clicked during autosave closes when that save succeeds',async()=>{const {ctx,els}=setup();const f=form();let closed=0,finish;f.closest=()=>({open:true,close(){closed++}});ctx.pending=new Promise(r=>finish=r);vm.runInContext('save=()=>pending;formPending=true',ctx);const task=els['#eventForm'].onsubmit({preventDefault(){},target:f,auto:true});await els['#eventForm'].onsubmit({preventDefault(){},target:f});assert.equal(closed,0);finish(true);await task;assert.equal(closed,1);});
+
+test('whole tree aligns spouses and siblings across unequal ancestry depth',()=>{
+ const {ctx,els}=setup();
+ vm.runInContext(`data.people=[
+ {id:'ancestor',name:'Ancestor'},
+ {id:'grandA',name:'Grand A',parents:['ancestor'],spouse:'grandB'},
+ {id:'grandB',name:'Grand B',spouse:'grandA'},
+ {id:'otherGrandA',name:'Other grand A',spouse:'otherGrandB'},
+ {id:'otherGrandB',name:'Other grand B',spouse:'otherGrandA'},
+ {id:'father',name:'Father',parents:['grandA','grandB'],spouse:'mother'},
+ {id:'mother',name:'Mother',parents:['otherGrandA','otherGrandB'],spouse:'father'},
+ {id:'uncle',name:'Uncle',parents:['otherGrandA','otherGrandB']},
+ {id:'childA',name:'Child A',parents:['father','mother'],spouse:'partner'},
+ {id:'partner',name:'Partner',spouse:'childA'},
+ {id:'childB',name:'Child B',parents:['father','mother']},
+ {id:'unlinked',name:'Unlinked'}
+ ];personId='childA';renderTree();`,ctx);
+ const result=vm.runInContext('familyTreeLayout(data.people)',ctx),pos=id=>result.positions.get(id);
+ assert.equal(result.positions.size,12);assert.equal(result.warnings.length,0);
+ for(const [a,b] of [['grandA','otherGrandA'],['father','mother'],['mother','uncle'],['childA','childB'],['childA','partner']])assert.equal(pos(a).y,pos(b).y);
+ for(const [parent,child] of [['ancestor','grandA'],['grandA','father'],['otherGrandA','mother'],['father','childA']])assert.equal(pos(child).y-pos(parent).y,200);
+ const html=els['#records'].innerHTML;
+ assert(html.includes('Father · Mother → Child A, Child B'));
+ assert(html.includes('관계 미연결'));
+});
+test('inconsistent generations are reported instead of looping or inventing relationships',()=>{
+ const {ctx}=setup();
+ const result=vm.runInContext(`familyTreeLayout([{id:'a',name:'A',parents:['b']},{id:'b',name:'B',parents:['a']}])`,ctx);
+ assert(result.warnings.length>0);assert.equal(result.positions.size,2);
+});
