@@ -23,3 +23,11 @@ const DeviceLogin=(()=>{
  async function forget(){localStorage.removeItem(flag);await access('readwrite',s=>s.clear());}
  return {remember,restore,forget};
 })();
+// Password-locked connection: no plaintext token or password is persisted here.
+const ConnectionVault=(()=>{
+ const key='family-book:connection-v1';
+ function exists(){try{return !!localStorage.getItem(key);}catch{return false;}}
+ async function remember(session){const envelope=await FamilyCrypto.encryptJSON({owner:session.owner,repo:session.repo,token:session.token},session.password);localStorage.setItem(key,JSON.stringify(envelope));}
+ async function unlock(password){const raw=localStorage.getItem(key);if(!raw)throw Error('이 브라우저에서는 최초 한 번 저장소 연결이 필요합니다.');const saved=await FamilyCrypto.decryptJSON(JSON.parse(raw),password);if(!['owner','repo','token'].every(k=>typeof saved[k]==='string'&&saved[k]))throw Error('연결 정보를 다시 설정해 주세요.');return {...saved,password};}
+ return {exists,remember,unlock};
+})();
