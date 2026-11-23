@@ -2,7 +2,7 @@
 // 형식: { "version": 1, "people": [...], "events": [...] } (평문, 암호화하지 않은 파일)
 // - 같은 id 또는 같은 이름(괄호·공백 무시)의 사람이 있으면 새로 만들지 않고 그 사람에게 붙입니다.
 // - 이미 있는 기록(같은 id, 또는 같은 사람·시기·제목)은 건너뛰므로 같은 파일을 두 번 넣어도 중복되지 않습니다.
-// - 기존 사람의 정보와 기존 기록은 바꾸지 않습니다.
+// - 기존 사람의 정보와 기존 기록은 바꾸지 않습니다. 단, "update": true로 표시한 기록은 같은 id의 기존 기록 내용을 바꿉니다.
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -36,7 +36,7 @@
     const incoming = parse(raw);
     const data = structuredClone(current);
     const map = new Map();
-    const summary = { newPeople: [], matchedPeople: [], added: 0, skipped: 0, firstPersonId: '' };
+    const summary = { newPeople: [], matchedPeople: [], added: 0, updated: 0, skipped: 0, firstPersonId: '' };
 
     incoming.people.forEach((p, i) => {
       const where = '사람 ' + (i + 1) + '번째';
@@ -96,6 +96,15 @@
         source: text(e.source, 500, where + ' 자료 출처'),
         photos: (Array.isArray(e.photos) ? e.photos : []).filter(ph => ph && typeof ph.url === 'string' && PHOTO.test(ph.url)).map(ph => ({ url: ph.url, caption: typeof ph.caption === 'string' ? ph.caption.slice(0, 200) : '' }))
       };
+      // "update": true인 기록은 같은 id의 기존 기록(같은 사람)에서 파일에 적힌 항목만 새 내용으로 바꿉니다. 사진은 파일에 photos가 있을 때만 통째로 바꿉니다.
+      const prev = e.update === true && typeof e.id === 'string' && data.events.find(x => x.id === e.id && x.personId === personId);
+      if (prev) {
+        const keys = ['date', 'title', 'stage', 'place', 'body', 'source'].filter(k => Object.prototype.hasOwnProperty.call(e, k));
+        if (Array.isArray(e.photos)) keys.push('photos');
+        const changed = keys.filter(k => JSON.stringify(prev[k]) !== JSON.stringify(event[k]));
+        if (changed.length) { changed.forEach(k => { prev[k] = event[k]; }); summary.updated++; } else summary.skipped++;
+        return;
+      }
       const exists = data.events.some(x => x.id === event.id || (x.personId === personId && x.date === date && x.title === title));
       if (exists) { summary.skipped++; return; }
       data.events.push(event);
@@ -109,7 +118,7 @@
     const lines = [];
     if (s.newPeople.length) lines.push('새 가족 ' + s.newPeople.length + '명: ' + s.newPeople.join(', '));
     if (s.matchedPeople.length) lines.push('이미 있는 가족에 붙임: ' + s.matchedPeople.join(', '));
-    lines.push('추가할 기록 ' + s.added + '건' + (s.skipped ? ', 이미 있어 건너뛸 기록 ' + s.skipped + '건' : ''));
+    lines.push('추가할 기록 ' + s.added + '건' + (s.updated ? ', 내용을 고칠 기록 ' + s.updated + '건' : '') + (s.skipped ? ', 이미 있어 건너뛸 기록 ' + s.skipped + '건' : ''));
     return lines.join('\n');
   }
 
@@ -126,7 +135,7 @@ if (typeof document !== 'undefined') {
       if (!file) return;
       try {
         const { data: next, summary } = FamilyImport.merge(data, await file.text());
-        if (!summary.added && !summary.newPeople.length) { notice('가져올 새 기록이 없습니다. 모두 이미 들어 있습니다(' + summary.skipped + '건).'); return; }
+        if (!summary.added && !summary.updated && !summary.newPeople.length) { notice('가져올 새 기록이 없습니다. 모두 이미 들어 있습니다(' + summary.skipped + '건).'); return; }
         if (!confirm('「' + file.name + '」을(를) 가져옵니다.\n\n' + FamilyImport.describe(summary) + '\n\n가져온 뒤 바로 암호화해 저장합니다. 계속할까요?')) return;
         data = next;
         if (summary.firstPersonId) personId = summary.firstPersonId;
