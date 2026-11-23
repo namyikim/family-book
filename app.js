@@ -6,8 +6,8 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const uid=()=>crypto.randomUUID();
 const person=()=>data.people.find(p=>p.id===personId);
 const notice=s=>{$('#status').textContent=s;document.querySelectorAll('dialog[open] .save-status').forEach(el=>el.textContent=s);};
-let formTimer=null,formRevision=0,formPending=false,formSaving=false;
-function resetFormSave(){clearTimeout(formTimer);formPending=false;formRevision++;document.querySelectorAll('.save-status').forEach(el=>el.textContent='입력을 멈추면 약 2초 뒤 자동저장됩니다.');}
+let formTimer=null,formRevision=0,formPending=false,formSaving=false,closeRequested=false;
+function resetFormSave(){closeRequested=false;clearTimeout(formTimer);formPending=false;formRevision++;document.querySelectorAll('.save-status').forEach(el=>el.textContent='입력을 멈추면 약 2초 뒤 자동저장됩니다.');}
 function scheduleFormSave(f){formPending=true;formRevision++;clearTimeout(formTimer);f.querySelector('.save-status').textContent='변경사항 자동저장 대기 중…';formTimer=setTimeout(()=>autosaveForm(f),1800);}
 async function autosaveForm(f){if(!f.closest('dialog').open||!formPending)return;if(busy||formSaving){formTimer=setTimeout(()=>autosaveForm(f),500);return;}if(!f.checkValidity()){f.querySelector('.save-status').textContent='아직 저장되지 않았습니다. 이름 또는 기록의 시기·제목 등 필수 항목을 입력해 주세요.';return;}await f.onsubmit({preventDefault(){},target:f,auto:true});}
 
@@ -43,19 +43,20 @@ function updateFamilyRelations(people,p,children){
 }
 async function persistForm(f,auto,revision){
  const ok=await save();
- if(ok&&formRevision===revision){formPending=false;if(!auto)f.closest('dialog').close();}
+ if(ok&&formRevision===revision){formPending=false;if(!auto||closeRequested){closeRequested=false;f.closest('dialog').close();}}
+ if(!ok){formPending=true;closeRequested=false;}
  if(formRevision!==revision){formPending=true;clearTimeout(formTimer);formTimer=setTimeout(()=>autosaveForm(f),1800);}
  return ok;
 }
 $('#personForm').onsubmit=async ev=>{
- ev.preventDefault();if(busy||formSaving){scheduleFormSave(ev.target);return;}
+ ev.preventDefault();if(!ev.auto)closeRequested=true;if(busy||formSaving){if(!formSaving)scheduleFormSave(ev.target);return;}
  const f=ev.target,revision=formRevision;clearTimeout(formTimer);formSaving=true;
  try{const values=new FormData(f),p=Object.fromEntries(values);p.parents=values.getAll('parents');const children=values.getAll('children');delete p.children;p.id=p.id||uid();
  data.people=updateFamilyRelations(data.people,p,children);f.elements.id.value=p.id;personId=p.id;dirty=true;render();f.querySelector('.formError').textContent='';await persistForm(f,ev.auto,revision);
- }catch(e){formPending=true;f.querySelector('.formError').textContent=e.message;f.querySelector('.save-status').textContent='저장되지 않았습니다.';}finally{formSaving=false;}
+ }catch(e){closeRequested=false;formPending=true;f.querySelector('.formError').textContent=e.message;f.querySelector('.save-status').textContent='저장되지 않았습니다.';}finally{formSaving=false;}
 };
 $('#eventForm').onsubmit=async ev=>{
- ev.preventDefault();if(busy||formSaving){scheduleFormSave(ev.target);return;}
+ ev.preventDefault();if(!ev.auto)closeRequested=true;if(busy||formSaving){if(!formSaving)scheduleFormSave(ev.target);return;}
  const f=ev.target,revision=formRevision;clearTimeout(formTimer);formSaving=true;const submit=f.querySelector('button.primary');submit.disabled=true;
  try{const e=Object.fromEntries(new FormData(f));
  if(!/^\d{4}(-(?:0[1-9]|1[0-2]))?(-(?:0[1-9]|[12]\d|3[01]))?$/.test(e.date))throw Error('시기를 연도, 연-월 또는 연-월-일로 입력하세요.');
@@ -67,10 +68,15 @@ $('#eventForm').onsubmit=async ev=>{
  data=next;f.elements.id.value=e.id;photos=e.photos;
  if(files.length===f.elements.photos.files.length&&files.every((file,i)=>file===f.elements.photos.files[i]))f.elements.photos.value='';
  showPhotos();$('#deleteEvent').hidden=false;dirty=true;render();f.querySelector('.formError').textContent='';await persistForm(f,ev.auto,revision);
- }catch(e){formPending=true;f.querySelector('.formError').textContent=e.message;f.querySelector('.save-status').textContent='저장되지 않았습니다.';}finally{submit.disabled=false;formSaving=false;}
+ }catch(e){closeRequested=false;formPending=true;f.querySelector('.formError').textContent=e.message;f.querySelector('.save-status').textContent='저장되지 않았습니다.';}finally{submit.disabled=false;formSaving=false;}
 };
 for(const f of [$('#personForm'),$('#eventForm')]){f.addEventListener('input',()=>scheduleFormSave(f));f.addEventListener('change',()=>scheduleFormSave(f));}
-function closeEditor(dialog){if(formSaving||busy){notice('저장이 끝난 후 닫아 주세요.');return;}if(formPending&&!confirm('아직 저장되지 않은 입력이 있습니다. 창을 닫을까요? 이미 자동저장된 내용은 유지됩니다.'))return;clearTimeout(formTimer);formPending=false;dialog.close();}
+async function closeEditor(dialog){
+ const f=dialog.querySelector('form');
+ if(formSaving||busy){closeRequested=true;notice('서버 저장을 완료한 뒤 창을 닫습니다…');if(!formSaving)scheduleFormSave(f);return;}
+ if(formPending||dirty){if(!f.reportValidity())return;closeRequested=true;await f.onsubmit({preventDefault(){},target:f,auto:false});return;}
+ clearTimeout(formTimer);closeRequested=false;dialog.close();
+}
 for(const dialog of [$('#personDialog'),$('#eventDialog')])dialog.addEventListener('cancel',e=>{e.preventDefault();closeEditor(dialog);});
 $('#photoList').onclick=e=>{const b=e.target.closest('[data-remove-photo]');if(b){photos.splice(Number(b.dataset.removePhoto),1);showPhotos();scheduleFormSave($('#eventForm'));}};$('#deleteEvent').onclick=async()=>{if(busy||formSaving||!confirm('이 기록을 삭제할까요? 서버에 저장된 이전 버전은 GitHub 기록에 남습니다.'))return;resetFormSave();data.events=data.events.filter(e=>e.id!==$('#eventForm').elements.id.value);dirty=true;$('#eventDialog').close();render();await save();};document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeEditor($('#'+b.dataset.close)));
 $('#retry').onclick=()=>{const f=document.querySelector('dialog[open] form');if(f&&formPending)autosaveForm(f);else save();};$('#lock').onclick=async()=>{if(busy||formSaving)return;if((dirty||formPending)&&!confirm('미저장 변경이 있습니다. 로그아웃할까요?'))return;try{await DeviceLogin.forget();}catch(e){$('#loginError').textContent='로그인 유지는 해제됐지만 기기 정보 삭제에 실패했습니다. 브라우저의 사이트 데이터를 삭제해 주세요.';}resetFormSave();showConnectionSettings(!ConnectionVault.exists());session=null;data={version:1,people:[],events:[]};photos=[];sha=null;dirty=false;$('#workspace').hidden=true;$('#gate').hidden=false;$('#people').replaceChildren();$('#records').replaceChildren();$('#printArea').replaceChildren();for(const f of [$('#personForm'),$('#eventForm')])f.reset();$('#photoList').replaceChildren();$('#parentChoices').replaceChildren();$('#childChoices').replaceChildren();};
