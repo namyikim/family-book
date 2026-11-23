@@ -45,7 +45,7 @@ function showPhotos(){$('#photoList').innerHTML=photos.map((p,i)=>`<div>${imageM
 async function resize(file){if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>10*1024*1024)throw Error('사진은 JPG·PNG·WebP 형식으로 장당 10MB 이하만 가능합니다.');const img=await createImageBitmap(file);const ratio=Math.min(1,1400/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*ratio);c.height=Math.round(img.height*ratio);c.getContext('2d').drawImage(img,0,0,c.width,c.height);img.close();return {url:c.toDataURL('image/jpeg',.78),caption:file.name};}
 $('#login').onsubmit=async ev=>{ev.preventDefault();const f=ev.target;f.querySelector('button').disabled=true;$('#loginError').textContent='';try{session=$('#connectionFields').hidden?await ConnectionVault.unlock(f.elements.password.value):Object.fromEntries(new FormData(f));session.owner=session.owner.trim();session.repo=session.repo.trim();session.token=session.token.trim();demo=false;await load();dirty=false;await prepareRecovery();let rememberError='';try{await ConnectionVault.remember(session);}catch{rememberError=' · 기기 저장이 차단되어 다음 접속 시 토큰을 다시 입력해야 합니다.';}try{if(f.elements.remember.checked)await DeviceLogin.remember(session);else await DeviceLogin.forget();}catch(e){rememberError=' · 이 브라우저에서 로그인 유지 정보를 저장하지 못했습니다.';}f.elements.token.value='';f.elements.password.value='';enter();showRecovery();notice((dirty?'미전송 기록 복구됨 · 저장 다시 시도를 눌러주세요.':'비공개 기록 연결됨')+rememberError);}catch(e){session=null;$('#loginError').textContent=e.message;}finally{f.querySelector('button').disabled=false;}};
 $('#demo').onclick=()=>{demo=true;data={version:1,people:[{id:'sample-parent',name:'가족 A (예시)',birth:'1985-04-12',bio:'가상 인물입니다.',parents:[]},{id:'sample-child',name:'가족 B (예시)',birth:'2015-07-03',parents:['sample-parent']}],events:[{id:'sample-event',personId:'sample-parent',date:'1985-04-12',stage:'출생',title:'한 사람의 이야기가 시작되다',place:'예시 장소',body:'이곳에 가족의 기억을 적습니다.\n누가 함께했는지, 어떤 마음이었는지 천천히 기록해 보세요.\n\n이 내용은 사용법 안내를 위한 가상의 예시입니다.',source:'사용법 예시',photos:[]}]};dirty=false;enter();notice('둘러보기 · 가상 기록은 저장되지 않습니다.');};
-$('#people').onclick=e=>{const b=e.target.closest('[data-person]');if(b){currentView='records';personId=b.dataset.person;stage='전체 기록';render();}};$('#stages').onclick=e=>{const b=e.target.closest('[data-stage]');if(b){currentView='records';stage=b.dataset.stage;render();}};$('#search').oninput=renderRecords;$('#addPerson').onclick=()=>personEditor();$('#editPerson').onclick=()=>personEditor(true);$('#addEvent').onclick=()=>eventEditor();$('#records').onclick=e=>{const b=e.target.closest('[data-event]');if(b)eventEditor(b.dataset.event);};
+$('#people').onclick=e=>{const b=e.target.closest('[data-person]');if(b){personId=b.dataset.person;stage='전체 기록';render();}};$('#stages').onclick=e=>{const b=e.target.closest('[data-stage]');if(b){currentView='records';stage=b.dataset.stage;render();}};$('#search').oninput=renderRecords;$('#addPerson').onclick=()=>personEditor();$('#editPerson').onclick=()=>personEditor(true);$('#addEvent').onclick=()=>eventEditor();$('#records').onclick=e=>{const b=e.target.closest('[data-event]');if(b)eventEditor(b.dataset.event);};
 function updateFamilyRelations(people,p,children){
  const next=structuredClone(people),i=next.findIndex(x=>x.id===p.id);
  if(i<0)next.push(p);else next[i]=p;
@@ -98,37 +98,40 @@ $('#photoList').onclick=e=>{const b=e.target.closest('[data-remove-photo]');if(b
 $('#retry').onclick=()=>{const f=document.querySelector('dialog[open] form');if(f&&formPending)autosaveForm(f);else save();};$('#lock').onclick=async()=>{if(busy||formSaving)return;if((dirty||formPending)&&!confirm('미저장 변경이 있습니다. 로그아웃할까요?'))return;try{await DeviceLogin.forget();}catch(e){$('#loginError').textContent='로그인 유지는 해제됐지만 기기 정보 삭제에 실패했습니다. 브라우저의 사이트 데이터를 삭제해 주세요.';}pendingRecovery=null;recoveryUnarchived=false;$('#recoveryNotice').hidden=true;resetFormSave();showConnectionSettings(!ConnectionVault.exists());session=null;data={version:1,people:[],events:[]};photos=[];sha=null;dirty=false;$('#workspace').hidden=true;$('#gate').hidden=false;$('#people').replaceChildren();$('#records').replaceChildren();$('#printArea').replaceChildren();for(const f of [$('#personForm'),$('#eventForm')])f.reset();$('#photoList').replaceChildren();$('#parentChoices').replaceChildren();$('#childChoices').replaceChildren();};
 $('#backup').onclick=async()=>{if(demo){alert('실제 비공개 기록에 연결한 뒤 백업할 수 있습니다.');return;}try{const blob=new Blob([JSON.stringify(await FamilyCrypto.encryptJSON(data,session.password))],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='family-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){notice(e.message);}};
 function renderTree(){
-  $('#title').textContent='우리 가족 가계도';
-  $('#personMeta').textContent='FAMILY TREE';
-  const people=data.people, byId=new Map(people.map(p=>[p.id,p])), levels=new Map();
-  // Couple groups share one generation and stay adjacent within each row.
-  const groups=[],groupOf=new Map();
-  for(const p of people){if(groupOf.has(p.id))continue;const members=[p];groupOf.set(p.id,groups.length);
-    const spouse=byId.get(p.spouse);if(spouse&&!groupOf.has(spouse.id)){members.push(spouse);groupOf.set(spouse.id,groups.length);}groups.push(members);}
-  const ranks=groups.map(()=>0);
-  for(let pass=0;pass<groups.length;pass++){let changed=false;
-    groups.forEach((members,index)=>{for(const p of members)for(const parent of p.parents||[]){const parentGroup=groupOf.get(parent);if(parentGroup===undefined||parentGroup===index)continue;
-      const rank=ranks[parentGroup]+1;if(rank>ranks[index]){ranks[index]=rank;changed=true;}}});if(!changed)break;}
-  const rows=new Map(), positions=new Map();
-  groups.forEach((members,index)=>{const n=ranks[index];if(!rows.has(n))rows.set(n,[]);for(const p of members){levels.set(p.id,n);rows.get(n).push(p);}});
-  const width=Math.max(600,...[...rows.values()].map(row=>row.length*210+40));
-  for(const [n,row] of rows)row.forEach((p,i)=>positions.set(p.id,{x:(width-row.length*210)/2+i*210+15,y:35+n*180}));
-  const height=Math.max(200,(Math.max(0,...levels.values())+1)*180);
-  let edges='',nodes='';const spouses=new Set();
-  for(const p of people){const a=positions.get(p.id);
-    for(const id of p.parents||[]){const b=positions.get(id);if(!b)continue;
-      const mid=(b.y+84+a.y)/2;
-      edges+=`<path class="parent-line" d="M ${b.x+90} ${b.y+84} V ${mid} H ${a.x+90} V ${a.y}"><title>${esc(byId.get(id).name)} → ${esc(p.name)} (부모·자녀)</title></path>`;
-    }
-    const b=positions.get(p.spouse),key=[p.id,p.spouse].sort().join('|');
-    if(b&&!spouses.has(key)){spouses.add(key);edges+=`<path class="spouse-line" d="M ${a.x+90} ${a.y+42} L ${b.x+90} ${b.y+42}"><title>${esc(p.name)} · ${esc(byId.get(p.spouse).name)} (배우자)</title></path>`;}
-    nodes+=`<g class="tree-person ${p.id===personId?'selected':''}" data-tree-person="${esc(p.id)}" role="button" tabindex="0" aria-label="${esc(p.name)} 인물 정보 수정"><rect x="${a.x}" y="${a.y}" width="180" height="84" rx="12"/><text x="${a.x+90}" y="${a.y+34}" text-anchor="middle">${esc(p.name.length>11?p.name.slice(0,10)+'…':p.name)}</text><text class="tree-birth" x="${a.x+90}" y="${a.y+60}" text-anchor="middle">${esc(p.birth||'출생일 미등록')}</text><title>${esc(p.name)}</title></g>`;
+  const focus=person()||data.people[0],byId=new Map(data.people.map(p=>[p.id,p]));
+  $('#title').textContent=focus?focus.name+' · 가까운 가족':'우리 가족 가계도';
+  $('#personMeta').textContent='부모 · 배우자 · 자녀';
+  if(!focus){$('#records').innerHTML='<div class="empty">＋ 가족 버튼으로 가족을 등록해 주세요.</div>';return;}
+  const parents=[...new Set(focus.parents||[])].map(id=>byId.get(id)).filter(p=>p&&p.id!==focus.id);
+  const spouse=byId.get(focus.spouse);
+  const couple=spouse&&spouse.id!==focus.id?[focus,spouse]:[focus];
+  const children=data.people.filter(p=>p.id!==focus.id&&(p.parents||[]).includes(focus.id));
+  const width=Math.max(460,Math.max(parents.length,couple.length,children.length)*210+40);
+  const positions=new Map(),rows=[[parents,35],[couple,215],[children,395]];
+  for(const [row,y] of rows)row.forEach((p,i)=>positions.set(p.id,{x:(width-row.length*210)/2+i*210+15,y}));
+  const a=positions.get(focus.id),center=a.x+90;
+  let edges='',nodes='';
+  // Only direct relationships to the selected person are drawn.
+  if(parents.length){
+    const xs=parents.map(p=>positions.get(p.id).x+90),bus=165;
+    for(const p of parents){const b=positions.get(p.id);edges+=`<path class="parent-line" d="M ${b.x+90} ${b.y+84} V ${bus}"><title>${esc(p.name)} → ${esc(focus.name)} (부모·자녀)</title></path>`;}
+    edges+=`<path class="parent-line" d="M ${Math.min(center,...xs)} ${bus} H ${Math.max(center,...xs)} M ${center} ${bus} V ${a.y}"/>`;
   }
-  const name=id=>byId.get(id)?.name||'미등록';
-  $('#records').innerHTML=people.length?`<p class="hint">실선: 부모·자녀 · 점선: 배우자<br>인물을 누르면 관계를 수정할 수 있습니다. 넓은 가계도는 좌우로 스크롤하세요.</p><div class="tree-scroll" tabindex="0" aria-label="가계도 스크롤 영역"><svg class="family-tree" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-label="우리 가족 가계도">${edges}${nodes}</svg></div><details class="tree-details"><summary>가족 관계를 글로 보기</summary>${people.map(p=>`<article class="relation"><h3>${esc(p.name)}</h3><p>부모: ${esc((p.parents||[]).map(name).join(', ')||'미등록')}</p><p>배우자: ${esc(name(p.spouse))}</p><p>자녀: ${esc(people.filter(x=>(x.parents||[]).includes(p.id)).map(x=>x.name).join(', ')||'미등록')}</p></article>`).join('')}</details>`:'<div class="empty">＋ 가족 버튼으로 아버지·어머니와 가족을 등록해 주세요.<br>자녀의 인물 정보에서 부모를 선택하면 선으로 연결됩니다.</div>';
+  if(couple.length===2){const b=positions.get(spouse.id);edges+=`<path class="spouse-line" d="M ${a.x+180} ${a.y+42} H ${b.x}"><title>${esc(focus.name)} · ${esc(spouse.name)} (배우자)</title></path>`;}
+  if(children.length){
+    const xs=children.map(p=>positions.get(p.id).x+90),bus=345;
+    edges+=`<path class="parent-line" d="M ${center} ${a.y+84} V ${bus} M ${Math.min(center,...xs)} ${bus} H ${Math.max(center,...xs)}"/>`;
+    for(const p of children){const b=positions.get(p.id);edges+=`<path class="parent-line" d="M ${b.x+90} ${bus} V ${b.y}"><title>${esc(focus.name)} → ${esc(p.name)} (부모·자녀)</title></path>`;}
+  }
+  const visible=[...parents,...couple,...children].filter((p,i,all)=>all.findIndex(x=>x.id===p.id)===i);
+  for(const p of visible){const b=positions.get(p.id);
+    nodes+=`<g class="tree-person ${p.id===focus.id?'selected':''}" data-tree-person="${esc(p.id)}" role="button" tabindex="0" aria-label="${esc(p.name)} 기준 가계도 보기"><rect x="${b.x}" y="${b.y}" width="180" height="84" rx="12"/><text x="${b.x+90}" y="${b.y+34}" text-anchor="middle">${esc(p.name.length>11?p.name.slice(0,10)+'…':p.name)}</text><text class="tree-birth" x="${b.x+90}" y="${b.y+60}" text-anchor="middle">${esc(p.birth||'출생일 미등록')}</text><title>${esc(p.name)}</title></g>`;
+  }
+  const height=children.length?515:335,names=list=>esc(list.map(p=>p.name).join(', ')||'미등록');
+  $('#records').innerHTML=`<p class="hint">선택한 사람의 부모·배우자·자녀만 표시합니다.<br>실선: 부모·자녀 · 점선: 배우자<br>이름을 누르면 그 사람을 중심으로 바뀝니다. 정보 수정은 ‘인물 정보 · 가족 관계’를 눌러주세요.</p><div class="tree-scroll" tabindex="0" aria-label="가계도 스크롤 영역"><svg class="family-tree" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-label="${esc(focus.name)}의 부모·배우자·자녀 가계도">${edges}${nodes}</svg></div><details class="tree-details"><summary>가족 관계를 글로 보기</summary><article class="relation"><h3>${esc(focus.name)}</h3><p>부모: ${names(parents)}</p><p>배우자: ${names(couple.slice(1))}</p><p>자녀: ${names(children)}</p></article></details>`;
 }
 $('#relations').onclick=()=>{currentView='tree';render();};
-function editTreePerson(target){const node=target.closest('[data-tree-person]');if(!node)return;personId=node.dataset.treePerson;render();personEditor(true);}
+function editTreePerson(target){const node=target.closest('[data-tree-person]');if(!node)return;personId=node.dataset.treePerson;render();const selected=document.querySelector('.tree-person.selected');if(selected)selected.focus();}
 $('#records').addEventListener('click',e=>editTreePerson(e.target));
 $('#records').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('[data-tree-person]')){e.preventDefault();editTreePerson(e.target);}});
 $('#book').onclick=()=>{if(!data.people.length)return;$('#printArea').innerHTML='<h1>우리 가족의 시간</h1><p>가족의 삶과 기억을 모은 기록집</p>'+data.people.map(p=>`<section class="chapter"><h1>${esc(p.name)}</h1><p>${esc(p.birth||'')}</p><div class="story">${esc(p.bio||'')}</div>${sorted(p.id).map(e=>`<article><h2>${esc(e.date)} · ${esc(e.title)}</h2><p>${esc(e.place)}</p><div class="story">${esc(e.body)}</div>${e.photos.map(imageMarkup).join('')}<p>${esc(e.source||'')}</p></article>`).join('')}</section>`).join('');window.print();$('#printArea').replaceChildren();};
