@@ -17,7 +17,7 @@
   }
   function fromBase64(value) {
     // 큰 데이터(수 MB)에서도 정규식이 호출 스택을 넘지 않도록 단순한 문자 검사만 사용합니다.
-    if (typeof value !== 'string' || value.length > 16000000 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new Error('암호화 파일 형식이 올바르지 않습니다.');
+    if (typeof value !== 'string' || value.length > 400000000 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new Error('암호화 파일 형식이 올바르지 않습니다.');
     const binary = atob(value), bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes;
@@ -26,11 +26,11 @@
     const source = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']);
     return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS }, source, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
   }
-  async function encryptJSON(value, password) {
+  async function encryptJSON(value, password, options = {}) {
     checkPassword(password);
     const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
     const plaintext = encoder.encode(JSON.stringify(value));
-    if (plaintext.length > 8000000) throw new Error('기록이 8MB를 초과합니다. 사진 수를 줄이고 다시 저장해 주세요.');
+    if (plaintext.length > (options.maxBytes || 8000000)) throw new Error('기록이 8MB를 초과합니다. 사진 수를 줄이고 다시 저장해 주세요.');
     const key = await derive(password, salt);
     const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
     return { version: 1, kdf: 'PBKDF2-SHA256', iterations: ITERATIONS, salt: toBase64(salt), iv: toBase64(iv), ciphertext: toBase64(new Uint8Array(ciphertext)) };
