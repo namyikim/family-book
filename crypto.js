@@ -16,8 +16,11 @@
     return btoa(binary);
   }
   function fromBase64(value) {
-    if (typeof value !== 'string' || value.length > 16000000 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new Error('암호화 파일 형식이 올바르지 않습니다.');
-    return Uint8Array.from(atob(value), c => c.charCodeAt(0));
+    // 큰 데이터(수 MB)에서도 정규식이 호출 스택을 넘지 않도록 단순한 문자 검사만 사용합니다.
+    if (typeof value !== 'string' || value.length > 16000000 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new Error('암호화 파일 형식이 올바르지 않습니다.');
+    const binary = atob(value), bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
   }
   async function derive(password, salt) {
     const source = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveKey']);
