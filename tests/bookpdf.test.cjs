@@ -56,11 +56,12 @@ test('a real PDF is produced with Korean and Hanja fonts embedded', async () => 
   const fontBytes = { R: fs.readFileSync('fonts/NanumMyeongjo-Regular.ttf'), B: fs.readFileSync('fonts/NanumMyeongjo-Bold.ttf'), G: fs.readFileSync('fonts/NanumGothic-Regular.ttf') };
   const data = structuredClone(sample);
   data.events[0].body += '\n漢字도 들어갑니다.';
-  const r = await B.build({ PDFLib, fontkit, fontBytes, data, title: '우리 가족의 시간', year: 2026, madeOn: '2026-11-25' });
+  const r = await B.build({ PDFLib, fontkit, fontBytes, data, tree: {width: 400, height: 300, positions: new Map([['a', {x: 20, y: 20}], ['b', {x: 220, y: 20}]]), parentsOf: new Map()}, title: '우리 가족의 시간', year: 2026, madeOn: '2026-11-25' });
   assert.equal(Buffer.from(r.bytes.slice(0, 5)).toString(), '%PDF-');
   assert(r.pages >= 8);
   const doc = await PDFLib.PDFDocument.load(r.bytes);
   assert.equal(doc.getPageCount(), r.pages);
+  assert(doc.getPage(0).getWidth() > doc.getPage(1).getWidth());
   assert(r.bytes.length < 2_000_000, 'fonts are subset, not embedded whole');
 });
 
@@ -69,4 +70,22 @@ test('the site loads the book maker and keeps the strict content policy', () => 
   assert(html.includes('bookpdf.js'));
   assert(html.includes("script-src 'self'"));
   assert(app.includes('id="makePdf"') && app.includes('FamilyBookPdf.download'));
+});
+
+ test('whole family tree is the first PDF page, with readable vector labels and correct contents', () => {
+  const tree = { width: 1200, height: 400, positions: new Map([['a', {x: 30, y: 30}], ['b', {x: 30, y: 240}]]), parentsOf: new Map([['b', ['a']]]) };
+  const book = B.layout(sample, { tree }, fonts, new Map());
+  assert.equal(book.pages[0].kind, 'tree');
+  assert.equal(book.pages[1].kind, 'cover');
+  const pg = book.pages[0];
+  assert(pg.size[0] > B.PAGE.w);
+  for (const p of sample.people) assert(pg.ops.some(op => op.t === 'text' && op.s === p.name && op.size >= 10));
+  assert(pg.ops.some(op => op.t === 'line' && op.y2 !== op.y));
+  for (const op of pg.ops) {
+    if (op.t === 'text') assert(op.x >= 0 && op.y > 0 && op.y < pg.size[1]);
+    if (op.t === 'frame') assert(op.x + op.w <= pg.size[0] && op.y + op.h <= pg.size[1]);
+  }
+  assert.equal(book.marks.p0 % 2, 1);
+  const toc = book.pages.find(p => p.kind === 'toc');
+  assert(toc.ops.some(op => op.t === 'text' && op.s === String(book.marks.p0)));
 });

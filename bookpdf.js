@@ -1,6 +1,6 @@
 // 책으로 만들기: 기록을 자서전 형식의 PDF 책으로 엮습니다.
 // - 인쇄 창을 쓰지 않고 브라우저 안에서 PDF 파일을 직접 만들어 내려받습니다(인쇄가 막힌 PC에서도 동작).
-// - 구성: 표지 → 차례 → 사람마다 [이야기 첫 장(이름·소개) → 생애 단계별 글과 사진 → 연보] → 판권.
+// - 구성: 전체 가계도 → 표지 → 차례 → 사람마다 [이야기 첫 장(이름·소개) → 생애 단계별 글과 사진 → 연보] → 판권.
 // - 판형은 신국판(152×225mm). 본문은 나눔명조, 작은 글씨와 한자는 나눔고딕. 글꼴은 쓰인 글자만 PDF에 넣습니다.
 // - 기록과 사진은 이미 브라우저에서 복호화된 것만 쓰며, 어디에도 보내지 않습니다.
 (function (root, factory) {
@@ -194,6 +194,47 @@
       return rows;
     }
 
+    // 전체 관계를 먼저 읽는 펼침면. 본문과 같은 배치를 재사용하고 벡터로 보존합니다.
+    if (opts.tree && data.people.length) {
+      const tree = opts.tree, scale = 0.65, margin = 32;
+      const w = Math.max(PAGE.h, tree.width * scale + margin * 2);
+      const h = Math.max(PAGE.w, tree.height * scale + 100);
+      newPage('tree'); page.size = [w, h];
+      text('우리 가족 전체 가계도', margin, h - 30, 'B', 19);
+      text('실선: 부모·자녀    갈색 선: 배우자', margin, h - 49, 'G', 9, GRAY);
+      const point = (x, y) => [margin + x * scale, h - 70 - y * scale];
+      const line = (x1, y1, x2, y2, color = GRAY) => {
+        const a = point(x1, y1), b = point(x2, y2);
+        page.ops.push({ t: 'line', x1: a[0], y: a[1], x2: b[0], y2: b[1], thickness: 0.8, color });
+      };
+      const seen = new Set();
+      for (const p of data.people) {
+        const a = tree.positions.get(p.id);
+        const b = tree.positions.get(p.spouse), key = [p.id, p.spouse].sort().join('|');
+        if (b && p.id !== p.spouse && !seen.has(key)) {
+          seen.add(key); const l = a.x < b.x ? a : b, r = a.x < b.x ? b : a;
+          line(l.x + 180, l.y + 42, r.x, r.y + 42, ACCENT);
+        }
+        const parents = (tree.parentsOf.get(p.id) || []).map(id => tree.positions.get(id)).filter(Boolean);
+        const bottom = Math.max(...parents.map(b => b.y + 84));
+        if (parents.length && bottom < a.y) {
+          const junction = parents.reduce((sum, b) => sum + b.x + 90, 0) / parents.length;
+          const join = bottom + 18, bus = bottom + (a.y - bottom) / 2;
+          for (const b of parents) { line(b.x + 90, b.y + 84, b.x + 90, join); line(b.x + 90, join, junction, join); }
+          line(junction, join, junction, bus); line(junction, bus, a.x + 90, bus); line(a.x + 90, bus, a.x + 90, a.y);
+        }
+      }
+      for (const p of data.people) {
+        const a = tree.positions.get(p.id), xy = point(a.x, a.y + 84);
+        page.ops.push({ t: 'rect', x: xy[0], y: xy[1], w: 180 * scale, h: 84 * scale, color: [1, 1, 1] });
+        page.ops.push({ t: 'frame', x: xy[0], y: xy[1], w: 180 * scale, h: 84 * scale, color: RULE, thickness: 0.7 });
+        const lines = T.wrap(clean(p.name), 'G', 10, 168 * scale);
+        lines.forEach((l, i) => text(T.lineText(l), xy[0] + 5, xy[1] + 84 * scale - 14 - i * 12, 'G', 10));
+        if (p.birth && lines.length < 3) text(clean(p.birth), xy[0] + 5, xy[1] + 9, 'G', 8, GRAY);
+      }
+      if (tree.warnings && tree.warnings.length) text('일부 관계는 확인이 필요합니다. 사이트 가계도의 안내를 확인해 주세요.', margin, 18, 'G', 8, GRAY);
+    }
+
     // 1. 표지
     newPage('cover');
     page.ops.push({ t: 'rect', x: 0, y: 0, w: PAGE.w, h: PAGE.h, color: [0.96, 0.94, 0.9] });
@@ -356,12 +397,12 @@
     progress('쪽을 짜는 중…');
     const book = layout(o.data, o, fonts, images);
     for (const pg of book.pages) {
-      const page = doc.addPage(book.size);
+      const page = doc.addPage(pg.size || book.size);
       for (const op of pg.ops) {
         const color = op.color ? rgb(...op.color) : undefined;
         if (op.t === 'text') page.drawText(op.s, { x: op.x, y: op.y, size: op.size, font: pdfFonts[op.font], color });
         else if (op.t === 'img') page.drawImage(embedded.get(op.key), { x: op.x, y: op.y, width: op.w, height: op.h });
-        else if (op.t === 'line') page.drawLine({ start: { x: op.x1, y: op.y }, end: { x: op.x2, y: op.y }, thickness: op.thickness, color });
+        else if (op.t === 'line') page.drawLine({ start: { x: op.x1, y: op.y }, end: { x: op.x2, y: op.y2 ?? op.y }, thickness: op.thickness, color });
         else if (op.t === 'dots') page.drawLine({ start: { x: op.x1, y: op.y }, end: { x: op.x2, y: op.y }, thickness: 0.6, color, dashArray: [0.6, 3], lineCap: 1 });
         else if (op.t === 'rect') page.drawRectangle({ x: op.x, y: op.y, width: op.w, height: op.h, color });
         else if (op.t === 'frame') page.drawRectangle({ x: op.x, y: op.y, width: op.w, height: op.h, borderColor: color, borderWidth: op.thickness });
@@ -409,7 +450,7 @@
     const progress = o.onProgress || (() => {});
     const a = await loadAssets(progress);
     const today = new Date(), day = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-    const result = await build({ ...a, data: o.data, title: o.title, subtitle: o.subtitle, year: today.getFullYear(), madeOn: day, loadPhoto: o.loadPhoto, onProgress: progress });
+    const result = await build({ ...a, data: o.data, tree: o.tree, title: o.title, subtitle: o.subtitle, year: today.getFullYear(), madeOn: day, loadPhoto: o.loadPhoto, onProgress: progress });
     const url = URL.createObjectURL(new Blob([result.bytes], { type: 'application/pdf' })), link = document.createElement('a');
     link.href = url; link.download = (o.fileName || 'family-book') + '_' + day + '.pdf'; // 한글 파일 이름은 일부 브라우저에서 깨져 영문으로 둡니다.
     document.body.append(link); link.click(); link.remove();
